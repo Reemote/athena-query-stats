@@ -17,6 +17,9 @@ s3_client = boto3.client('s3')
 MAX_ATHENA_BATCH_SIZE = 50
 UPLOAD_TARGET_BATCH_SIZE = 5000
 
+RESULTS_FETCH_MAX_RETRY = 10
+RESULTS_FETCH_RETRY_WAIT_SEC = 10
+
 # Settings for querying the watermarks of existing data.
 # Note: it's tempting to apply some partition pruning clause here, but this would be 
 # dangerous with workgroups that haven't been in use recently. Here we'd then fall back to 
@@ -33,10 +36,6 @@ WATERMARKS_QUERY_STRING = '''
     group by 
         workgroup
 '''
-
-RESULTS_FETCH_MAX_RETRY = 10
-RESULTS_FETCH_RETRY_WAIT_SEC = 10
-
 
 
 def parse_args():
