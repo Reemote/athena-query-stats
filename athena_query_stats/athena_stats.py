@@ -52,6 +52,7 @@ def loop_and_fetch_stats(bucket, prefix, athena_table):
     execution_ids = []
     counter = 1
     watermarks = get_watermarks(athena_table)
+    ingestion_id = ulid().lower()
     for workgroup in get_workgroups():
         print(f"Processing workgroup {workgroup}...")
         watermark = watermarks.get(workgroup, 0)
@@ -71,14 +72,14 @@ def loop_and_fetch_stats(bucket, prefix, athena_table):
                 counter += 1
                 upload_batch.extend(filtered_stats)
                 if len(upload_batch) >= UPLOAD_TARGET_BATCH_SIZE:
-                    upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at)
+                    upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at, ingestion_id)
                     # initialize next batch:
                     upload_batch = []
                     ingested_at = datetime.now()
             else:
                 # Upload the remaining batch which did not reach the UPLOAD_TARGET_BATCH_SIZE
                 if len(upload_batch) > 0:
-                    upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at)
+                    upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at, ingestion_id)
                 print(f"All recent queries processed.")
                 break
 
@@ -124,7 +125,7 @@ def upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at):
         # json.dump(record, gzip_out, default=json_serial)
         record['_meta'] = {
             "ingested_at": ingested_at.timestamp(),
-            "ingestion_id": ingestion_id  # global variable
+            "ingestion_id": ingestion_id
         }
         json_line = json.dumps(record, default=json_serial) + "\n"
         gzip_out.write(json_line.encode())
@@ -216,7 +217,6 @@ def json_serial(obj):
 # entry point:
 def run():
     args = parse_args()
-    ingestion_id = ulid().lower()
     loop_and_fetch_stats(args.bucket, args.prefix, args.athena_table)
 
 
