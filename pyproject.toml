@@ -16,4 +16,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-athena-query-stats = "athena_query_stats.athena_stats"
+athena-query-stats = "athena_query_stats.athena_stats:main"
