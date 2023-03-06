@@ -213,8 +213,12 @@ def json_serial(obj):
         return obj.timestamp()
     raise TypeError("Type %s not serializable" % type(obj))
 
-
-if __name__ == "__main__":
+# entry point:
+def run():
     args = parse_args()
     ingestion_id = ulid().lower()
     loop_and_fetch_stats(args.bucket, args.prefix, args.athena_table)
+
+
+if __name__ == "__main__":
+    run()
