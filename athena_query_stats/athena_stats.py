@@ -108,7 +108,7 @@ def get_watermarks(athena_table):
     watermarks = {row.get("Data")[0].get("VarCharValue"): float(row.get("Data")[1].get("VarCharValue"))  for row in response.get("ResultSet").get("Rows")[1:]}
     return watermarks
 
-def upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at):
+def upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at, ingestion_id):
     date_partition = (
         ingested_at.strftime("year=%Y/")
         + ingested_at.strftime("month=%m/")
