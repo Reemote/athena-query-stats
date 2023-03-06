@@ -17,8 +17,12 @@ s3_client = boto3.client('s3')
 MAX_ATHENA_BATCH_SIZE = 50
 UPLOAD_TARGET_BATCH_SIZE = 5000
 
-# Settings for querying the watermarks of existing data:
-# FIXME: pass table name as input param.
+# Settings for querying the watermarks of existing data.
+# Note: it's tempting to apply some partition pruning clause here, but this would be 
+# dangerous with workgroups that haven't been in use recently. Here we'd then fall back to 
+# fetching all data again.\
+# Thus, pruning would only be safe on a time range greater or equal the max history that 
+# the API contains data. And then it's of no great use...
 WATERMARKS_QUERY_STRING = '''
     select
         workgroup
@@ -29,6 +33,7 @@ WATERMARKS_QUERY_STRING = '''
     group by 
         workgroup
 '''
+
 RESULTS_FETCH_MAX_RETRY = 10
 RESULTS_FETCH_RETRY_WAIT_SEC = 10
 
@@ -52,6 +57,7 @@ def loop_and_fetch_stats(bucket, prefix, athena_table):
         watermark = watermarks.get(workgroup, 0)
         print(f"Fetching queries submitted after epoch timestamp {watermark}...")
         upload_batch = []
+        ingested_at = datetime.now()
         for execution_ids in get_execution_ids(workgroup):
             print("Fetching data on batch %d (%d total queries)" % (counter, counter * MAX_ATHENA_BATCH_SIZE))
             if len(execution_ids) > 0:
@@ -65,13 +71,15 @@ def loop_and_fetch_stats(bucket, prefix, athena_table):
                 counter += 1
                 upload_batch.extend(filtered_stats)
                 if len(upload_batch) >= UPLOAD_TARGET_BATCH_SIZE:
-                    upload_to_s3(upload_batch, bucket, prefix, workgroup)
+                    upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at)
+                    # initialize next batch:
                     upload_batch = []
+                    ingested_at = datetime.now()
             else:
                 # Upload the remaining batch which did not reach the UPLOAD_TARGET_BATCH_SIZE
                 if len(upload_batch) > 0:
-                    upload_to_s3(upload_batch, bucket, prefix, workgroup)
-                print(f"All recent queries processed for workgroup {workgroup}")
+                    upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at)
+                print(f"All recent queries processed.")
                 break
 
 
@@ -99,25 +107,30 @@ def get_watermarks(athena_table):
     watermarks = {row.get("Data")[0].get("VarCharValue"): float(row.get("Data")[1].get("VarCharValue"))  for row in response.get("ResultSet").get("Rows")[1:]}
     return watermarks
 
-def upload_to_s3(upload_batch, bucket, prefix, workgroup):
+def upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at):
+    date_partition = (
+        ingested_at.strftime("year=%Y/")
+        + ingested_at.strftime("month=%m/")
+        + ingested_at.strftime("day=%d/")
+        + ingested_at.strftime("dt=%Y-%m-%d")
+    )
     # We'll do this all in memory
     # Create a gzip'ed JSON bytes object
     # Useful :) https://gist.github.com/veselosky/9427faa38cee75cd8e27
     writer = io.BytesIO()
     gzip_out = gzip.GzipFile(fileobj=writer, mode='w')
-    now = datetime.now()
     for record in upload_batch:
         # print(json.dumps(record, default=json_serial))
         # json.dump(record, gzip_out, default=json_serial)
         record['_meta'] = {
-            "ingested_at": now.timestamp(),
+            "ingested_at": ingested_at.timestamp(),
             "ingestion_id": ingestion_id  # global variable
         }
         json_line = json.dumps(record, default=json_serial) + "\n"
         gzip_out.write(json_line.encode())
     gzip_out.close()
 
-    key = prefix + '/workgroup=' + workgroup + '/' + now.strftime("dt=%Y-%m-%d") + '/' + ulid().lower() + ".json.gz"
+    key = prefix + '/' + date_partition + '/' + ulid().lower() + ".json.gz"
     print(f"Uploading batch to location {key}...")
     s3_client.put_object(
         Bucket=bucket,
@@ -127,6 +140,38 @@ def upload_to_s3(upload_batch, bucket, prefix, workgroup):
         Body=writer.getvalue()
     )
     print("Done.")
+    add_table_partition(athena_table, date_partition)
+
+
+def add_table_partition(athena_table, date_partition):
+    print("Registering Athena table partition for this ingestion date...")
+    query_string = f'''
+        alter table {athena_table}_json add if not exists
+            partition (dt='{date_partition}')
+    '''
+    query = athena_client.start_query_execution(QueryString=query_string)
+    time.sleep(3)
+
+    retry_count = 0
+    while retry_count <= RESULTS_FETCH_MAX_RETRY:
+        try:
+            response = athena_client.get_query_results(
+                QueryExecutionId=query.get('QueryExecutionId'),
+                MaxResults=1000
+            )
+            print("Success.")
+            break
+        except:
+            retry_count += 1
+            print(f"Waiting {RESULTS_FETCH_RETRY_WAIT_SEC} sec for query to succeed...")
+            time.sleep(RESULTS_FETCH_RETRY_WAIT_SEC)
+            print(f"Retry ({retry_count}/{RESULTS_FETCH_MAX_RETRY})...")
+    status_code = response.get('ResponseMetadata').get('HTTPStatusCode')
+    if status_code == 200:
+        print("Success.")
+    else:
+        print(response)
+        raise Exception('Failed registering Athena partition!')
 
 
 def get_query_executions(ids):
