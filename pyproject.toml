@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "athena-query-stats"
+version = "0.1.0"
+description = "Extract AWS Athena query history and load it to S3"
+authors = ["Philipp Leufke <philipp.leufke@vay.io>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+boto3 = "^1.26.84"
+ulid = "^1.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+athena-query-stats = "athena_query_stats.athena_stats:run"
