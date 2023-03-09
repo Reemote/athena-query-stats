@@ -108,7 +108,13 @@ def get_watermarks(athena_table):
     return watermarks
 
 def upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at, ingestion_id):
-    date_partition = (
+    date_partition_string = (
+        ingested_at.strftime("year='%Y', ")
+        + ingested_at.strftime("month='%m', ")
+        + ingested_at.strftime("day='%d', ")
+        + ingested_at.strftime("dt='%Y-%m-%d'")
+    )
+    date_partition_path = (
         ingested_at.strftime("year=%Y/")
         + ingested_at.strftime("month=%m/")
         + ingested_at.strftime("day=%d/")
@@ -130,7 +136,7 @@ def upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at, ingest
         gzip_out.write(json_line.encode())
     gzip_out.close()
 
-    key = prefix + '/' + date_partition + '/' + ulid().lower() + ".json.gz"
+    key = prefix + '/' + date_partition_path + '/' + ulid().lower() + ".json.gz"
     print(f"Uploading batch to location {key}...")
     s3_client.put_object(
         Bucket=bucket,
@@ -140,14 +146,15 @@ def upload_to_s3(upload_batch, bucket, prefix, athena_table, ingested_at, ingest
         Body=writer.getvalue()
     )
     print("Done.")
-    add_table_partition(athena_table, date_partition)
+    add_table_partition(athena_table, date_partition_string)
+    add_table_partition(athena_table + '_json', date_partition_string)
 
 
-def add_table_partition(athena_table, date_partition):
-    print("Registering Athena table partition for this ingestion date...")
+def add_table_partition(athena_table, date_partition_string):
+    print(f"Registering Athena partition to table {athena_table} for this ingestion date...")
     query_string = f'''
-        alter table {athena_table}_json add if not exists
-            partition (dt='{date_partition}')
+        alter table {athena_table} add if not exists
+            partition ({date_partition_string})
     '''
     query = athena_client.start_query_execution(QueryString=query_string)
     time.sleep(3)
